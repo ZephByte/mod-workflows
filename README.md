@@ -2,6 +2,10 @@
 
 Reusable GitHub Actions workflows for my Stonecutter-based Fabric mods.
 
+## Versioning
+
+Callers pin `@v1`. Each change gets a new `v1.x.y` tag and `v1` is moved to it. Exact `v1.x.y` tags are protected and never move.
+
 ## Requirements
 
 - Stonecutter project with one subproject per Minecraft version under `versions/<v>`
