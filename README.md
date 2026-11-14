@@ -56,3 +56,4 @@ jobs:
 | `release-name` | required | GitHub Release title prefix |
 | `version-property` | `mod_version` | `gradle.properties` key the tag must match |
 | `java-version` | `25` | |
+| `sync-modrinth-description` | `true` | Replace the Modrinth project description with `README.md`, with relative links pointed at the tag on GitHub. Needs `MODRINTH_TOKEN` to have the Write projects scope |

@@ -14,6 +14,10 @@ on:
       java-version:
         type: string
         default: '25'
+      sync-modrinth-description:
+        description: Replace the Modrinth project description with README.md
+        type: boolean
+        default: true
     secrets:
       MODRINTH_TOKEN:
         required: false
@@ -93,3 +97,31 @@ jobs:
           MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
           CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
           CHANGELOG: ${{ steps.changelog.outputs.content }}
+
+      - name: Update Modrinth description from README
+        if: inputs.sync-modrinth-description
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          BLOB_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.ref_name }}
+          RAW_URL: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}
+        run: |
+          PROJECT_ID=$(grep '^modrinth_id=' gradle.properties | cut -d'=' -f2)
+          if [ -z "$PROJECT_ID" ] || [ -z "$MODRINTH_TOKEN" ]; then
+            echo "No modrinth_id or MODRINTH_TOKEN, skipping"
+            exit 0
+          fi
+          python3 - > modrinth-body.json <<'EOF'
+          import json, os, re
+          readme = open("README.md", encoding="utf-8").read()
+          def absolute(m):
+              target = m[1]
+              is_image = re.search(r'\.(png|jpe?g|gif|svg|webp)$', target, re.I)
+              return f"]({os.environ['RAW_URL' if is_image else 'BLOB_URL']}/{target})"
+          readme = re.sub(r'\]\((?!https?://|#|mailto:)([^)\s]+)\)', absolute, readme)
+          print(json.dumps({"body": readme}))
+          EOF
+          curl --fail-with-body -sS -X PATCH "https://api.modrinth.com/v2/project/${PROJECT_ID}" \
+            -H "Authorization: ${MODRINTH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -H "User-Agent: ZephByte/mod-workflows" \
+            --data @modrinth-body.json
