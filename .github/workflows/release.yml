@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  workflow_call:
+    inputs:
+      release-name:
+        description: Display name used for the GitHub Release title, e.g. "Scaled Dragon Fight"
+        type: string
+        required: true
+      version-property:
+        description: gradle.properties key holding the bare mod version the tag must match
+        type: string
+        default: mod_version
+      java-version:
+        type: string
+        default: '25'
+    secrets:
+      MODRINTH_TOKEN:
+        required: false
+      CURSEFORGE_TOKEN:
+        required: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check tag matches ${{ inputs.version-property }}
+        env:
+          VERSION_PROPERTY: ${{ inputs.version-property }}
+        run: |
+          BASE_VERSION=$(grep "^${VERSION_PROPERTY}=" gradle.properties | cut -d'=' -f2)
+          if [ "${GITHUB_REF_NAME}" != "${BASE_VERSION}" ]; then
+            echo "::error::Tag '${GITHUB_REF_NAME}' does not match ${VERSION_PROPERTY} '${BASE_VERSION}' in gradle.properties"
+            exit 1
+          fi
+
+      - name: Set up Java ${{ inputs.java-version }}
+        uses: actions/setup-java@v6
+        with:
+          java-version: ${{ inputs.java-version }}
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Make Gradle wrapper executable
+        run: chmod +x gradlew
+
+      - name: Build all Minecraft versions
+        run: ./gradlew build
+
+      - name: Find release jars
+        id: jars
+        run: |
+          JARS=$(find versions/*/build/libs -name "*-${GITHUB_REF_NAME}+*.jar" ! -name "*-dev.jar" ! -name "*-sources.jar" | sort)
+          EXPECTED=$(find versions -mindepth 1 -maxdepth 1 -type d | wc -l)
+          FOUND=$(echo "$JARS" | grep -c . || true)
+          if [ "$FOUND" -ne "$EXPECTED" ]; then
+            echo "::error::Expected ${EXPECTED} release jars (one per Minecraft version), found ${FOUND}"
+            exit 1
+          fi
+          echo "$JARS"
+          echo "paths<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$JARS" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Extract changelog
+        id: changelog
+        run: |
+          CONTENT=$(awk '/^## /{if(p) exit; p=1; next} p' CHANGELOG.md)
+          if [ -z "$CONTENT" ]; then
+            echo "::error::No changelog section found in CHANGELOG.md"
+            exit 1
+          fi
+          echo "content<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CONTENT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ inputs.release-name }} ${{ github.ref_name }}
+          body: ${{ steps.changelog.outputs.content }}
+          files: ${{ steps.jars.outputs.paths }}
+          fail_on_unmatched_files: true
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') }}
+
+      - name: Publish to Modrinth and CurseForge
+        run: ./gradlew publishMods
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          CHANGELOG: ${{ steps.changelog.outputs.content }}
